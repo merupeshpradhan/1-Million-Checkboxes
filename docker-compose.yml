@@ -1,7 +1,5 @@
 services:
   valkey:
-    image: valkey/valkey:latest
-    container_name: valkey-server
+    image: valkey/valkey
     ports:
-      - "6379:6379"
-    restart: always
+      - 6379:6379
