@@ -1,51 +1,110 @@
-require('dotenv').config();
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const { client, subscriber, connectRedis } = require('./redisClient');
-const { isRateLimited } = require('./rateLimiter');
+require("dotenv").config();
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const axios = require("axios");
+const cookieParser = require("cookie-parser");
+const jwt = require("jsonwebtoken");
+const { client, subscriber, connectRedis } = require("./redisClient");
+const { isRateLimited } = require("./rateLimiter");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-app.use(express.static('public'));
+app.use(express.static("public"));
+app.use(cookieParser());
 
-// Redis Pub/Sub: Listen for updates from other server instances
-subscriber.subscribe('checkbox_updates', (message) => {
-    const { index, value } = JSON.parse(message);
-    io.emit('update', { index, value }); // Send to all connected browser clients
+// --- AUTH LOGIC ---
+
+// 1. Redirect to GitHub (FIXED URL)
+app.get("/login", (req, res) => {
+  // const url = `https://github.com{process.env.GITHUB_CLIENT_ID}&scope=user`;
+  const url = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=user`;
+  res.redirect(url);
 });
 
-io.on('connection', async (socket) => {
-    console.log('User connected:', socket.id);
+// 2. GitHub Callback (FIXED ENDPOINTS)
+app.get("/auth/github/callback", async (req, res) => {
+  const { code } = req.query;
+  try {
+    // Exchange code for token (FIXED URL)
+    const tokenRes = await axios.post(
+      "https://github.com/login/oauth/access_token",
+      {
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+      },
+      { headers: { Accept: "application/json" } },
+    );
 
-    // 1. Send the full 1 million state to the user on join
-    // For now, we'll send a "Ready" signal. 
-    // (Later we will optimize this for the 1 million boxes)
-    socket.emit('init', { message: "Welcome to the Grid!" });
+    const accessToken = tokenRes.data.access_token;
 
-    // 2. Handle checkbox toggle events
-    socket.on('toggle', async (data) => {
-        const { index, value } = data;
-        const userId = socket.id; // Using socket.id as a simple ID for now
-
-        // 3. Apply Custom Rate Limiting
-        const limited = await isRateLimited(userId);
-        if (limited) {
-            return socket.emit('error', { message: 'Too fast! Slow down.' });
-        }
-
-        // 4. Update the Bitmap in Redis
-        await client.setBit('checkbox_grid', index, value ? 1 : 0);
-
-        // 5. Broadcast change via Redis Pub/Sub
-        const updatePayload = JSON.stringify({ index, value });
-        await client.publish('checkbox_updates', updatePayload);
+    // Get User Info (FIXED URL: ://github.com)
+    const userRes = await axios.get("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
+
+    // Create our own JWT
+    const token = jwt.sign(
+      { id: userRes.data.id, name: userRes.data.login },
+      process.env.JWT_SECRET,
+    );
+
+    // Store token in a cookie
+    res.cookie("token", token, { httpOnly: true });
+    res.redirect("/");
+  } catch (err) {
+    console.error("Login Error:", err.message);
+    res.send("Login failed: " + err.message);
+  }
 });
 
-const PORT = process.env.PORT || 3000;
+// --- WEBSOCKET LOGIC ---
+
+// Listen for updates from Redis and send to all browser clients
+subscriber.subscribe("checkbox_updates", (msg) => {
+  io.emit("update", JSON.parse(msg));
+});
+
+io.on("connection", (socket) => {
+  const cookieString = socket.handshake.headers.cookie;
+  let user = null;
+
+  if (cookieString) {
+    const match = cookieString.match(/token=([^;]+)/);
+    const token = match ? match[1] : null;
+    if (token) {
+      try {
+        user = jwt.verify(token, process.env.JWT_SECRET);
+        console.log(`User connected: ${user.name}`);
+      } catch (e) {
+        console.log("JWT Verification failed");
+      }
+    }
+  }
+
+  socket.on("toggle", async (data) => {
+    // Validation
+    if (!user) return socket.emit("error", { message: "Please Login First!" });
+
+    // Rate Limiting
+    if (await isRateLimited(user.id)) {
+      return socket.emit("error", { message: "Too fast! Slow down." });
+    }
+
+    // Save to Redis Bitmap
+    await client.setBit("checkbox_grid", data.index, data.value ? 1 : 0);
+
+    // Broadcast to other users via Redis Pub/Sub
+    await client.publish("checkbox_updates", JSON.stringify(data));
+  });
+});
+
+// Start Server
 connectRedis().then(() => {
-    server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+  server.listen(3000, () =>
+    console.log("🚀 Server running at http://localhost:3000"),
+  );
 });
