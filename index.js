@@ -108,7 +108,7 @@ io.on("connection", (socket) => {
 
     // 🚀 ADD RATE LIMITING HERE
     const rateLimitKey = `rate_limit:${session.user}`;
-    const limit = 10; // Max 10 clicks
+    const limit = 3; // Max 3 clicks
     const windowSeconds = 10; // Every 10 seconds
 
     const currentUsage = await redis.incr(rateLimitKey);
