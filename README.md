@@ -67,10 +67,11 @@ Open `http://localhost:8000` in your browser.
 ### 1. Redis State Management
 Instead of storing 1 million rows in a SQL database, I used a **Redis Bitmap** (`BITSET`/`GETBIT`). This allows for $O(1)$ time complexity for toggling and minimal memory usage. User ownership is tracked via a **Redis Hash** mapping indices to usernames.
 
-### 2. Custom Rate Limiting Logic
-To prevent bot abuse, I implemented a manual limit using Redis:
-- **Key:** `rate_limit:{username}`
-- **Logic:** Each click increments a counter. On the first click, a 10-second expiry is set. If the counter exceeds 10 within that window, the WebSocket emits an error and blocks the database write.
+### 2. Custom Rate Limiting (Spam Protection)
+Per the requirements, I implemented a manual rate limiter without external packages:
+- **Logic:** Each user has a Redis key `rate_limit:{username}`.
+- **Limit:** **3 clicks per 10 seconds**.
+- **Execution:** Uses `redis.incr()` and `redis.expire()`. If the count exceeds 3, the backend blocks the database write and emits a "Spam detected" error to the client.
 
 ### 3. WebSocket Flow
 1. **Client** clicks a checkbox -> Sends `client:checkbox:change` with index.
