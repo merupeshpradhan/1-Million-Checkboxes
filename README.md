@@ -86,4 +86,4 @@ Authentication is handled via Express sessions. Only logged-in users can emit ch
 
 ## 📺 Demo
 - **Live Link:** https://webcheckbox.rupeshpradhan.com/
-- **YouTube Demo:** [My yt Link]
+- **Project Demo Video:** https://youtu.be/nrvjbp4MrIc?si=yoRKClHFYwBVTc5y
