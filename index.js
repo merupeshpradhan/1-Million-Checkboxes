@@ -99,11 +99,25 @@ io.on("connection", (socket) => {
   socket.emit("server:user", socket.request.session.user || null);
 
   socket.on("client:checkbox:change", async ({ index }) => {
-    const session = socket.request.session; // ✅ FIXED
+    const session = socket.request.session;
 
     // ✅ 1. Check login
     if (!session.user) {
       return socket.emit("server:error", "Login required!");
+    }
+
+    // 🚀 ADD RATE LIMITING HERE
+    const rateLimitKey = `rate_limit:${session.user}`;
+    const limit = 10; // Max 10 clicks
+    const windowSeconds = 10; // Every 10 seconds
+
+    const currentUsage = await redis.incr(rateLimitKey);
+    if (currentUsage === 1) {
+      await redis.expire(rateLimitKey, windowSeconds);
+    }
+
+    if (currentUsage > limit) {
+      return socket.emit("server:error", "Spam detected! Wait a few seconds.");
     }
 
     // ✅ 2. LIMIT CHECK HERE
